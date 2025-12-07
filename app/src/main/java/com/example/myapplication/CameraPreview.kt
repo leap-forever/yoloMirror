@@ -27,6 +27,7 @@ import java.util.concurrent.Executors
 @Composable
 fun CameraPreview(
     modifier: Modifier = Modifier,
+    cameraSelector: CameraSelector = CameraSelector.DEFAULT_BACK_CAMERA,
     onImageCaptured: (ImageProxy) -> Unit = { _ -> }
 ) {
     val context = LocalContext.current
@@ -59,8 +60,6 @@ fun CameraPreview(
                     .also {
                         it.setAnalyzer(executor, onImageCaptured)
                     }
-                
-                val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
                 
                 try {
                     cameraProvider.unbindAll()

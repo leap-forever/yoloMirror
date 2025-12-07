@@ -8,10 +8,21 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageProxy
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.Button
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.core.app.ActivityCompat
@@ -73,15 +84,36 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 fun CameraScreen(modifier: Modifier = Modifier) {
-    Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-        CameraPreview(
-            modifier = modifier.fillMaxSize(),
-            onImageCaptured = { image: ImageProxy ->
-                // Handle captured image here
-                // Will be implemented for YOLO detection
-                image.close()
+    var isBackCamera by remember { mutableStateOf(true) }
+    val cameraSelector = if (isBackCamera) CameraSelector.DEFAULT_BACK_CAMERA else CameraSelector.DEFAULT_FRONT_CAMERA
+    
+    Scaffold(
+        modifier = Modifier.fillMaxSize(),
+        bottomBar = {
+            Row(
+                modifier = Modifier.fillMaxSize(),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.Bottom
+            ) {
+                Button(
+                    onClick = { isBackCamera = !isBackCamera }
+                ) {
+                    Text(if (isBackCamera) "切换到前置摄像头" else "切换到后置摄像头")
+                }
             }
-        )
+        }
+    ) { innerPadding ->
+        Box(modifier = modifier.fillMaxSize()) {
+            CameraPreview(
+                modifier = modifier.fillMaxSize(),
+                cameraSelector = cameraSelector,
+                onImageCaptured = { image: ImageProxy ->
+                    // Handle captured image here
+                    // Will be implemented for YOLO detection
+                    image.close()
+                }
+            )
+        }
     }
 }
 
