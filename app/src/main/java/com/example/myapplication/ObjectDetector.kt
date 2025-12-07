@@ -56,21 +56,23 @@ class ObjectDetector(private val context: Context) {
         // Preprocessing
         val byteBuffer = convertBitmapToByteBuffer(resizedBitmap)
         
-        // Output arrays - fixed shapes to match the actual model output
-        val outputBoxes = Array(1) { Array(DETECTION_COUNT) { FloatArray(4) } }  // [1, 8400, 4]
-        val outputClasses = Array(1) { Array(DETECTION_COUNT) { FloatArray(NUM_CLASSES) } }  // [1, 8400, 80]
+        // Output arrays - adjust shapes according to the actual model
+        val outputBoxes = Array(1) { Array(DETECTION_COUNT) { FloatArray(4) } }     // [1, 8400, 4] for boxes
+        val outputScores = Array(1) { FloatArray(DETECTION_COUNT) }                 // [1, 8400] for scores
+        val outputClasses = Array(1) { FloatArray(DETECTION_COUNT) }                // [1, 8400] for classes
         
         // Run inference with multiple outputs
         interpreter?.runForMultipleInputsOutputs(
             arrayOf(byteBuffer),
             mapOf(
                 0 to outputBoxes,
-                1 to outputClasses
+                1 to outputScores,
+                2 to outputClasses
             )
         )
         
         // Post-processing
-        return parseDetectionResult(outputBoxes[0], outputClasses[0], bitmap.width, bitmap.height)
+        return parseDetectionResult(outputBoxes[0], outputScores[0], outputClasses[0], bitmap.width, bitmap.height)
     }
 
     private fun convertBitmapToByteBuffer(bitmap: Bitmap): ByteBuffer {
@@ -95,7 +97,8 @@ class ObjectDetector(private val context: Context) {
 
     private fun parseDetectionResult(
         boxes: Array<FloatArray>,
-        classes: Array<FloatArray>,
+        scores: FloatArray,
+        classes: FloatArray,
         imageWidth: Int,
         imageHeight: Int
     ): List<DetectionResult> {
@@ -103,26 +106,17 @@ class ObjectDetector(private val context: Context) {
         
         for (i in boxes.indices) {
             val box = boxes[i]
-            val classProbs = classes[i]
-            
-            // Extract bounding box coordinates
-            val xCenter = box[0] * imageWidth
-            val yCenter = box[1] * imageHeight
-            val w = box[2] * imageWidth
-            val h = box[3] * imageHeight
-            
-            // Get class with maximum probability
-            var maxClass = 0
-            var maxProb = classProbs[0]
-            for (c in 1 until NUM_CLASSES) {
-                if (classProbs[c] > maxProb) {
-                    maxProb = classProbs[c]
-                    maxClass = c
-                }
-            }
+            val score = scores[i]
+            val classIndex = classes[i].toInt()
             
             // Check if probability is above threshold
-            if (maxProb > PROBABILITY_THRESHOLD) {
+            if (score > PROBABILITY_THRESHOLD) {
+                // Extract bounding box coordinates
+                val xCenter = box[0] * imageWidth
+                val yCenter = box[1] * imageHeight
+                val w = box[2] * imageWidth
+                val h = box[3] * imageHeight
+                
                 // Convert center coordinates to corner coordinates
                 val left = max(0f, xCenter - w / 2)
                 val top = max(0f, yCenter - h / 2)
@@ -134,8 +128,8 @@ class ObjectDetector(private val context: Context) {
                 results.add(
                     DetectionResult(
                         boundingBox = boundingBox,
-                        confidence = maxProb,
-                        className = if (maxClass < labels.size) labels[maxClass] else "Unknown"
+                        confidence = score,
+                        className = if (classIndex < labels.size) labels[classIndex] else "Unknown"
                     )
                 )
             }
@@ -198,7 +192,6 @@ class ObjectDetector(private val context: Context) {
     companion object {
         private const val INPUT_SIZE = 640
         private const val DETECTION_COUNT = 8400
-        private const val NUM_CLASSES = 80
         private const val PROBABILITY_THRESHOLD = 0.5f
         private const val IOU_THRESHOLD = 0.2f
     }
