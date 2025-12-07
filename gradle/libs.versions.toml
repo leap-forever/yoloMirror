@@ -36,7 +36,7 @@ androidx-camera-view = { group = "androidx.camera", name = "camera-view", versio
 # TensorFlow Lite libraries
 tensorflowlite = { group = "org.tensorflow", name = "tensorflow-lite", version.ref = "tensorflowLite" }
 tensorflowlitegpu = { group = "org.tensorflow", name = "tensorflow-lite-gpu", version.ref = "tensorflowLite" }
-#tensorflowlitesupport = { group = "org.tensorflow", name = "tensorflow-lite-support", version.ref = "tensorflowLite" }
+tensorflowlitesupport = { group = "org.tensorflow", name = "tensorflow-lite-support", version = "0.5.0" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

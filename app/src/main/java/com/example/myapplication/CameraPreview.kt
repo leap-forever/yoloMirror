@@ -39,6 +39,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import kotlin.math.max
 import kotlin.math.min
@@ -57,7 +58,7 @@ fun CameraPreview(
     }
     
     val executor = remember { 
-        ContextCompat.getMainExecutor(context) 
+        Executors.newSingleThreadExecutor()
     }
     
     AndroidView(
@@ -91,7 +92,7 @@ fun CameraPreview(
                 } catch (ex: Exception) {
                     Log.e("CameraPreview", "Use case binding failed", ex)
                 }
-            }, executor)
+            }, ContextCompat.getMainExecutor(context))
         }
     )
 }

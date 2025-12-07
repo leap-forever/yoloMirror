@@ -184,6 +184,10 @@ class ObjectDetector(private val context: Context) {
         return intersectionArea / unionArea
     }
 
+    fun isModelLoaded(): Boolean {
+        return interpreter != null
+    }
+
     fun close() {
         interpreter?.close()
         interpreter = null
