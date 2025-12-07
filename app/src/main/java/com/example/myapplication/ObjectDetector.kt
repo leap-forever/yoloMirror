@@ -56,14 +56,67 @@ class ObjectDetector(private val context: Context) {
         // Preprocessing
         val byteBuffer = convertBitmapToByteBuffer(resizedBitmap)
         
-        // Output arrays - YOLO models typically have a single output tensor
-        val output = Array(1) { FloatArray(DETECTION_COUNT * (NUM_CLASSES + 5)) }  // [1, 8400, 85] where 85 = 4 bbox + 1 objectness + 80 classes
+        try {
+            // 根据错误信息，模型输出是 [1, 8400, 4]
+            // 创建一个符合该形状的输出缓冲区
+            val output = Array(1) { Array(DETECTION_COUNT) { FloatArray(4) } }
+            
+            // 运行推理
+            interpreter?.run(byteBuffer, output)
+            
+            // 解析输出
+            return parseDetectionResult(output[0], bitmap.width, bitmap.height)
+        } catch (e: Exception) {
+            Log.e("ObjectDetector", "Error during detection", e)
+            return emptyList()
+        }
+    }
+    
+    // 更灵活的检测结果提取方法
+    private fun extractDetectionsFromOutput(
+        output: FloatArray,
+        imageWidth: Int,
+        imageHeight: Int
+    ): List<DetectionResult> {
+        val results = mutableListOf<DetectionResult>()
         
-        // Run inference
-        interpreter?.run(byteBuffer, output)
+        // 假设输出是扁平化的 [1, 8400, N] 其中 N 是每个检测的特征数
+        val numDetections = min(output.size / 4, DETECTION_COUNT)  // 假设每个检测至少有4个值
         
-        // Post-processing
-        return parseDetectionResult(output[0], bitmap.width, bitmap.height)
+        for (i in 0 until numDetections) {
+            val startIndex = i * 4
+            
+            // 确保不会越界
+            if (startIndex + 3 >= output.size) break
+            
+            // 提取边界框坐标 (假设是YOLO格式: x_center, y_center, width, height)
+            val xCenter = output[startIndex] * imageWidth
+            val yCenter = output[startIndex + 1] * imageHeight
+            val width = output[startIndex + 2] * imageWidth
+            val height = output[startIndex + 3] * imageHeight
+            
+            // 转换为左上角和右下角坐标
+            val left = max(0f, xCenter - width / 2)
+            val top = max(0f, yCenter - height / 2)
+            val right = min(imageWidth.toFloat(), xCenter + width / 2)
+            val bottom = min(imageHeight.toFloat(), yCenter + height / 2)
+            
+            // 只添加有效的检测框
+            if (right > left && bottom > top && width > 0 && height > 0) {
+                val boundingBox = android.graphics.RectF(left, top, right, bottom)
+                
+                results.add(
+                    DetectionResult(
+                        boundingBox = boundingBox,
+                        confidence = 0.8f,  // 默认置信度
+                        className = "Object"  // 默认类别
+                    )
+                )
+            }
+        }
+        
+        // 应用NMS去除重叠的检测框
+        return results.filterNonMaxSuppression()
     }
 
     private fun convertBitmapToByteBuffer(bitmap: Bitmap): ByteBuffer {
@@ -87,65 +140,42 @@ class ObjectDetector(private val context: Context) {
     }
 
     private fun parseDetectionResult(
-        output: FloatArray,
+        boxes: Array<FloatArray>,
         imageWidth: Int,
         imageHeight: Int
     ): List<DetectionResult> {
         val results = mutableListOf<DetectionResult>()
         
-        // Reshape output from [1, 8400, 85] to [8400, 85]
-        val detections = mutableListOf<FloatArray>()
-        for (i in 0 until DETECTION_COUNT) {
-            val detection = FloatArray(NUM_CLASSES + 5)
-            for (j in 0 until (NUM_CLASSES + 5)) {
-                detection[j] = output[i * (NUM_CLASSES + 5) + j]
-            }
-            detections.add(detection)
-        }
-        
-        for (detection in detections) {
-            val objectness = detection[4]
+        for (i in boxes.indices) {
+            val box = boxes[i]
             
-            // Check if objectness is above threshold
-            if (objectness > PROBABILITY_THRESHOLD) {
-                // Extract bounding box coordinates
-                val xCenter = detection[0] * imageWidth
-                val yCenter = detection[1] * imageHeight
-                val w = detection[2] * imageWidth
-                val h = detection[3] * imageHeight
+            // Extract bounding box coordinates - YOLO outputs are normalized [0, 1]
+            val xCenter = box[0] * imageWidth
+            val yCenter = box[1] * imageHeight
+            val w = box[2] * imageWidth
+            val h = box[3] * imageHeight
+            
+            // Convert center coordinates to corner coordinates
+            val left = max(0f, xCenter - w / 2)
+            val top = max(0f, yCenter - h / 2)
+            val right = min(imageWidth.toFloat(), xCenter + w / 2)
+            val bottom = min(imageHeight.toFloat(), yCenter + h / 2)
+            
+            // Only add detections with valid boxes (non-zero area)
+            if ((right - left) > 0 && (bottom - top) > 0) {
+                val boundingBox = android.graphics.RectF(left, top, right, bottom)
                 
-                // Convert center coordinates to corner coordinates
-                val left = max(0f, xCenter - w / 2)
-                val top = max(0f, yCenter - h / 2)
-                val right = min(imageWidth.toFloat(), xCenter + w / 2)
-                val bottom = min(imageHeight.toFloat(), yCenter + h / 2)
-                
-                // Find the class with highest confidence
-                var maxClassScore = 0f
-                var classIndex = 0
-                for (i in 0 until NUM_CLASSES) {
-                    val classScore = detection[5 + i] * objectness
-                    if (classScore > maxClassScore) {
-                        maxClassScore = classScore
-                        classIndex = i
-                    }
-                }
-                
-                // Check if class confidence is above threshold
-                if (maxClassScore > PROBABILITY_THRESHOLD) {
-                    val boundingBox = android.graphics.RectF(left, top, right, bottom)
-                    
-                    results.add(
-                        DetectionResult(
-                            boundingBox = boundingBox,
-                            confidence = maxClassScore,
-                            className = if (classIndex < labels.size) labels[classIndex] else "Unknown"
-                        )
+                results.add(
+                    DetectionResult(
+                        boundingBox = boundingBox,
+                        confidence = 0.8f, // 暂时使用固定置信度，因为模型没有输出置信度
+                        className = "Object"  // 暂时使用固定类别，因为模型没有输出类别信息
                     )
-                }
+                )
             }
         }
         
+        // 应用NMS去除重叠的检测框
         return results.filterNonMaxSuppression()
     }
 
