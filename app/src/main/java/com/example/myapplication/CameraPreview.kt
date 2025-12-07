@@ -17,6 +17,7 @@ import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
+import kotlinx.coroutines.delay
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Box
@@ -76,9 +77,20 @@ fun CameraPreview(
                 
                 val imageAnalyzer = ImageAnalysis.Builder()
                     .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                    // Set target resolution to reduce processing load
+                    .setTargetResolution(android.util.Size(640, 480))
                     .build()
                     .also {
-                        it.setAnalyzer(executor, onImageCaptured)
+                        it.setAnalyzer(executor) { image ->
+                            try {
+                                // Directly call onImageCaptured without Thread.sleep
+                                onImageCaptured(image)
+                            } catch (e: Exception) {
+                                Log.e("CameraPreview", "Error analyzing image", e)
+                            } finally {
+                                image.close()
+                            }
+                        }
                     }
                 
                 try {
@@ -89,6 +101,7 @@ fun CameraPreview(
                         preview,
                         imageAnalyzer
                     )
+                    Log.d("CameraPreview", "Camera successfully bound")
                 } catch (ex: Exception) {
                     Log.e("CameraPreview", "Use case binding failed", ex)
                 }

@@ -56,23 +56,14 @@ class ObjectDetector(private val context: Context) {
         // Preprocessing
         val byteBuffer = convertBitmapToByteBuffer(resizedBitmap)
         
-        // Output arrays - adjust shapes according to the actual model
-        val outputBoxes = Array(1) { Array(DETECTION_COUNT) { FloatArray(4) } }     // [1, 8400, 4] for boxes
-        val outputScores = Array(1) { FloatArray(DETECTION_COUNT) }                 // [1, 8400] for scores
-        val outputClasses = Array(1) { FloatArray(DETECTION_COUNT) }                // [1, 8400] for classes
+        // Output arrays - YOLO models typically have a single output tensor
+        val output = Array(1) { FloatArray(DETECTION_COUNT * (NUM_CLASSES + 5)) }  // [1, 8400, 85] where 85 = 4 bbox + 1 objectness + 80 classes
         
-        // Run inference with multiple outputs
-        interpreter?.runForMultipleInputsOutputs(
-            arrayOf(byteBuffer),
-            mapOf(
-                0 to outputBoxes,
-                1 to outputScores,
-                2 to outputClasses
-            )
-        )
+        // Run inference
+        interpreter?.run(byteBuffer, output)
         
         // Post-processing
-        return parseDetectionResult(outputBoxes[0], outputScores[0], outputClasses[0], bitmap.width, bitmap.height)
+        return parseDetectionResult(output[0], bitmap.width, bitmap.height)
     }
 
     private fun convertBitmapToByteBuffer(bitmap: Bitmap): ByteBuffer {
@@ -96,26 +87,32 @@ class ObjectDetector(private val context: Context) {
     }
 
     private fun parseDetectionResult(
-        boxes: Array<FloatArray>,
-        scores: FloatArray,
-        classes: FloatArray,
+        output: FloatArray,
         imageWidth: Int,
         imageHeight: Int
     ): List<DetectionResult> {
         val results = mutableListOf<DetectionResult>()
         
-        for (i in boxes.indices) {
-            val box = boxes[i]
-            val score = scores[i]
-            val classIndex = classes[i].toInt()
+        // Reshape output from [1, 8400, 85] to [8400, 85]
+        val detections = mutableListOf<FloatArray>()
+        for (i in 0 until DETECTION_COUNT) {
+            val detection = FloatArray(NUM_CLASSES + 5)
+            for (j in 0 until (NUM_CLASSES + 5)) {
+                detection[j] = output[i * (NUM_CLASSES + 5) + j]
+            }
+            detections.add(detection)
+        }
+        
+        for (detection in detections) {
+            val objectness = detection[4]
             
-            // Check if probability is above threshold
-            if (score > PROBABILITY_THRESHOLD) {
+            // Check if objectness is above threshold
+            if (objectness > PROBABILITY_THRESHOLD) {
                 // Extract bounding box coordinates
-                val xCenter = box[0] * imageWidth
-                val yCenter = box[1] * imageHeight
-                val w = box[2] * imageWidth
-                val h = box[3] * imageHeight
+                val xCenter = detection[0] * imageWidth
+                val yCenter = detection[1] * imageHeight
+                val w = detection[2] * imageWidth
+                val h = detection[3] * imageHeight
                 
                 // Convert center coordinates to corner coordinates
                 val left = max(0f, xCenter - w / 2)
@@ -123,15 +120,29 @@ class ObjectDetector(private val context: Context) {
                 val right = min(imageWidth.toFloat(), xCenter + w / 2)
                 val bottom = min(imageHeight.toFloat(), yCenter + h / 2)
                 
-                val boundingBox = android.graphics.RectF(left, top, right, bottom)
+                // Find the class with highest confidence
+                var maxClassScore = 0f
+                var classIndex = 0
+                for (i in 0 until NUM_CLASSES) {
+                    val classScore = detection[5 + i] * objectness
+                    if (classScore > maxClassScore) {
+                        maxClassScore = classScore
+                        classIndex = i
+                    }
+                }
                 
-                results.add(
-                    DetectionResult(
-                        boundingBox = boundingBox,
-                        confidence = score,
-                        className = if (classIndex < labels.size) labels[classIndex] else "Unknown"
+                // Check if class confidence is above threshold
+                if (maxClassScore > PROBABILITY_THRESHOLD) {
+                    val boundingBox = android.graphics.RectF(left, top, right, bottom)
+                    
+                    results.add(
+                        DetectionResult(
+                            boundingBox = boundingBox,
+                            confidence = maxClassScore,
+                            className = if (classIndex < labels.size) labels[classIndex] else "Unknown"
+                        )
                     )
-                )
+                }
             }
         }
         
@@ -196,6 +207,7 @@ class ObjectDetector(private val context: Context) {
     companion object {
         private const val INPUT_SIZE = 640
         private const val DETECTION_COUNT = 8400
+        private const val NUM_CLASSES = 80  // COCO dataset has 80 classes
         private const val PROBABILITY_THRESHOLD = 0.5f
         private const val IOU_THRESHOLD = 0.2f
     }

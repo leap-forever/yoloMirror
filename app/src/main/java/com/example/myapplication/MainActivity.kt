@@ -23,7 +23,10 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import kotlin.math.min
+import kotlin.math.max
 import androidx.compose.material3.Button
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -39,6 +42,7 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.dp
 import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
@@ -162,8 +166,9 @@ class MainActivity : ComponentActivity() {
     }
     
     fun showDetectionNotification(className: String, confidence: Float) {
+        // Use default app icon instead of potentially missing ic_launcher_foreground
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setSmallIcon(R.mipmap.ic_launcher)
             .setContentTitle("Object Detected")
             .setContentText("$className detected with ${String.format("%.2f", confidence * 100)}% confidence")
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
@@ -199,6 +204,7 @@ fun CameraScreen(modifier: Modifier = Modifier) {
     val viewSize = remember { android.graphics.Point(1080, 1920) } // Default size
     var isDetecting by remember { mutableStateOf(false) }
     var lastDetectionTime by remember { mutableStateOf(0L) }
+    var processingImage by remember { mutableStateOf(false) }
     
     DisposableEffect(objectDetector) {
         onDispose {
@@ -210,9 +216,11 @@ fun CameraScreen(modifier: Modifier = Modifier) {
         modifier = Modifier.fillMaxSize(),
         bottomBar = {
             Row(
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
                 horizontalArrangement = Arrangement.SpaceEvenly,
-                verticalAlignment = Alignment.Bottom
+                verticalAlignment = Alignment.CenterVertically
             ) {
                 Button(
                     onClick = { isBackCamera = !isBackCamera }
@@ -239,34 +247,54 @@ fun CameraScreen(modifier: Modifier = Modifier) {
                 modifier = Modifier.fillMaxSize(),
                 cameraSelector = cameraSelector,
                 onImageCaptured = { image: ImageProxy ->
-                    // Convert ImageProxy to Bitmap
-                    val bitmap = imageProxyToBitmap(image)
-                    bitmap?.let {
-                        imageBitmap = it.asImageBitmap()
-                        
-                        // Run object detection only if detecting flag is true
-                        if (isDetecting) {
-                            // Limit detection frequency to avoid overload
-                            val currentTime = System.currentTimeMillis()
-                            if (currentTime - lastDetectionTime > 1000) { // At least 1 second between detections
-                                lastDetectionTime = currentTime
-                                
-                                val results = objectDetector.detect(it)
-                                detectionResults = results
-                                
-                                // Show notification for first detected object
-                                if (results.isNotEmpty()) {
-                                    val firstResult = results.first()
-                                    context.showDetectionNotification(firstResult.className, firstResult.confidence)
-                                }
-                                
-                                // Update image size for overlay
-                                imageSize.set(it.width, it.height)
-                            }
-                        }
+                    // Skip if already processing an image to prevent overload
+                    if (processingImage) {
+                        return@CameraPreview
                     }
                     
-                    image.close()
+                    processingImage = true
+                    
+                    try {
+                        // Convert ImageProxy to Bitmap with optimized options
+                        val bitmap = imageProxyToBitmap(image)
+                        bitmap?.let {
+                            // Scale down image if too large to prevent memory issues
+                            val scaledBitmap = if (it.width > 1024 || it.height > 1024) {
+                                val ratio = min(1024f / it.width, 1024f / it.height)
+                                val width = (it.width * ratio).toInt()
+                                val height = (it.height * ratio).toInt()
+                                Bitmap.createScaledBitmap(it, width, height, true)
+                            } else it
+                            
+                            imageBitmap = scaledBitmap.asImageBitmap()
+                            
+                            // Run object detection only if detecting flag is true
+                            if (isDetecting) {
+                                // Limit detection frequency to avoid overload
+                                val currentTime = System.currentTimeMillis()
+                                if (currentTime - lastDetectionTime > 1000) { // At least 1 second between detections
+                                    lastDetectionTime = currentTime
+                                    
+                                    val results = objectDetector.detect(scaledBitmap)
+                                    detectionResults = results
+                                    
+                                    // Show notification for first detected object
+                                    if (results.isNotEmpty()) {
+                                        val firstResult = results.first()
+                                        context.showDetectionNotification(firstResult.className, firstResult.confidence)
+                                    }
+                                    
+                                    // Update image size for overlay
+                                    imageSize.set(scaledBitmap.width, scaledBitmap.height)
+                                }
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.e("MainActivity", "Error processing image", e)
+                    } finally {
+                        processingImage = false
+                    }
+                    // Note: Image will be closed in CameraPreview.kt's analyzer callback
                 }
             )
             
@@ -284,23 +312,39 @@ fun CameraScreen(modifier: Modifier = Modifier) {
 }
 
 fun imageProxyToBitmap(image: ImageProxy): Bitmap? {
-    val planeProxy = image.planes[0]
-    val buffer = planeProxy.buffer
-    val imageData = ByteArray(buffer.remaining()).also { buffer.get(it) }
-    
-    val yuvImage = YuvImage(
-        imageData,
-        ImageFormat.NV21,
-        image.width,
-        image.height,
+    return try {
+        // Use a more efficient approach with lower quality to reduce processing load
+        val yBuffer = image.planes[0].buffer
+        val uBuffer = image.planes[1].buffer
+        val vBuffer = image.planes[2].buffer
+        
+        val ySize = yBuffer.remaining()
+        val uSize = uBuffer.remaining()
+        val vSize = vBuffer.remaining()
+        
+        val nv21 = ByteArray(ySize + uSize + vSize)
+        
+        yBuffer.get(nv21, 0, ySize)
+        vBuffer.get(nv21, ySize, vSize)
+        uBuffer.get(nv21, ySize + vSize, uSize)
+        
+        val yuvImage = YuvImage(nv21, ImageFormat.NV21, image.width, image.height, null)
+        val out = ByteArrayOutputStream()
+        // Reduce JPEG quality to 70% to speed up decoding
+        yuvImage.compressToJpeg(Rect(0, 0, image.width, image.height), 70, out)
+        val imageBytes = out.toByteArray()
+        
+        // Use BitmapFactory options to optimize decoding
+        val options = BitmapFactory.Options().apply {
+            inPreferredConfig = Bitmap.Config.RGB_565 // Use less memory
+            inSampleSize = 1 // Can be increased if needed
+        }
+        
+        BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size, options)
+    } catch (e: Exception) {
+        Log.e("MainActivity", "Error converting image proxy to bitmap", e)
         null
-    )
-    
-    val outputStream = ByteArrayOutputStream()
-    yuvImage.compressToJpeg(Rect(0, 0, image.width, image.height), 100, outputStream)
-    val jpegData = outputStream.toByteArray()
-    
-    return BitmapFactory.decodeByteArray(jpegData, 0, jpegData.size)
+    }
 }
 
 @Composable
