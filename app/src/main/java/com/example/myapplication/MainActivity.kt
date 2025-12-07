@@ -2,6 +2,11 @@ package com.example.myapplication
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.ImageFormat
+import android.graphics.Rect
+import android.graphics.YuvImage
 import android.os.Bundle
 import android.util.Log
 import android.widget.Toast
@@ -14,20 +19,26 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.example.myapplication.ui.theme.MyApplicationTheme
+import java.io.ByteArrayOutputStream
 
 class MainActivity : ComponentActivity() {
     private val CAMERA_PERMISSION_REQUEST_CODE = 1001
@@ -87,6 +98,19 @@ fun CameraScreen(modifier: Modifier = Modifier) {
     var isBackCamera by remember { mutableStateOf(true) }
     val cameraSelector = if (isBackCamera) CameraSelector.DEFAULT_BACK_CAMERA else CameraSelector.DEFAULT_FRONT_CAMERA
     
+    val context = LocalContext.current
+    val objectDetector = remember { ObjectDetector(context) }
+    var detectionResults by remember { mutableStateOf<List<DetectionResult>>(emptyList()) }
+    var imageBitmap by remember { mutableStateOf<ImageBitmap?>(null) }
+    val imageSize = remember { android.graphics.Point(640, 640) } // Default size
+    val viewSize = remember { android.graphics.Point(1080, 1920) } // Default size
+    
+    DisposableEffect(objectDetector) {
+        onDispose {
+            objectDetector.close()
+        }
+    }
+    
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         bottomBar = {
@@ -103,18 +127,59 @@ fun CameraScreen(modifier: Modifier = Modifier) {
             }
         }
     ) { innerPadding ->
-        Box(modifier = modifier.fillMaxSize()) {
+        Box(modifier = modifier.fillMaxSize().padding(innerPadding)) {
             CameraPreview(
                 modifier = modifier.fillMaxSize(),
                 cameraSelector = cameraSelector,
                 onImageCaptured = { image: ImageProxy ->
-                    // Handle captured image here
-                    // Will be implemented for YOLO detection
+                    // Convert ImageProxy to Bitmap
+                    val bitmap = imageProxyToBitmap(image)
+                    bitmap?.let {
+                        imageBitmap = it.asImageBitmap()
+                        
+                        // Run object detection
+                        val results = objectDetector.detect(it)
+                        detectionResults = results
+                        
+                        // Update image size for overlay
+                        imageSize.set(it.width, it.height)
+                    }
+                    
                     image.close()
                 }
             )
+            
+            // Display detection results overlay
+            imageBitmap?.let {
+                DetectionOverlay(
+                    detectionResults = detectionResults,
+                    imageSize = imageSize,
+                    viewSize = viewSize,
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
         }
     }
+}
+
+fun imageProxyToBitmap(image: ImageProxy): Bitmap? {
+    val planeProxy = image.planes[0]
+    val buffer = planeProxy.buffer
+    val imageData = ByteArray(buffer.remaining()).also { buffer.get(it) }
+    
+    val yuvImage = YuvImage(
+        imageData,
+        ImageFormat.NV21,
+        image.width,
+        image.height,
+        null
+    )
+    
+    val outputStream = ByteArrayOutputStream()
+    yuvImage.compressToJpeg(Rect(0, 0, image.width, image.height), 100, outputStream)
+    val jpegData = outputStream.toByteArray()
+    
+    return BitmapFactory.decodeByteArray(jpegData, 0, jpegData.size)
 }
 
 @Composable
