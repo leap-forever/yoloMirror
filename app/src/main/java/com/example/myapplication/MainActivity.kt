@@ -231,10 +231,8 @@ fun CameraScreen(modifier: Modifier = Modifier) {
                 Button(
                     onClick = { 
                         isDetecting = !isDetecting
-                        if (isDetecting) {
-                            // Reset detection results when starting new detection
-                            detectionResults = emptyList()
-                        }
+                        // Always clear detection results when toggling the button
+                        detectionResults = emptyList()
                     }
                 ) {
                     Text(if (isDetecting) "停止检测" else "开始检测")
