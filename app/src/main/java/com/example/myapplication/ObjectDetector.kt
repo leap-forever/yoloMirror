@@ -51,21 +51,25 @@ class ObjectDetector(private val context: Context) {
             return emptyList()
         }
 
+        val originalWidth = bitmap.width
+        val originalHeight = bitmap.height
         val resizedBitmap = Bitmap.createScaledBitmap(bitmap, INPUT_SIZE, INPUT_SIZE, false)
         
         // Preprocessing
         val byteBuffer = convertBitmapToByteBuffer(resizedBitmap)
-        
+        ¬
         try {
             // 根据错误信息，模型输出是 [1, 8400, 4]
             // 创建一个符合该形状的输出缓冲区
             val output = Array(1) { Array(DETECTION_COUNT) { FloatArray(4) } }
             
+            Log.d("ObjectDetector", "Input bitmap: ${originalWidth}x${originalHeight}, Resized: ${INPUT_SIZE}x${INPUT_SIZE}")
+            
             // 运行推理
             interpreter?.run(byteBuffer, output)
             
-            // 解析输出
-            return parseDetectionResult(output[0], bitmap.width, bitmap.height)
+            // 解析输出，使用原始图像尺寸，而不是处理后的尺寸
+            return parseDetectionResult(output[0], originalWidth, originalHeight)
         } catch (e: Exception) {
             Log.e("ObjectDetector", "Error during detection", e)
             return emptyList()
@@ -146,37 +150,59 @@ class ObjectDetector(private val context: Context) {
     ): List<DetectionResult> {
         val results = mutableListOf<DetectionResult>()
         
-        for (i in boxes.indices) {
+        Log.d("ObjectDetector", "Processing ${boxes.size} detection boxes for image size ${imageWidth}x${imageHeight}")
+        
+        // 尝试只处理前几个检测框，并降低阈值
+        val maxDetections = 5
+        
+        for (i in 0 until maxDetections) {
+            if (i >= boxes.size) break
+            
             val box = boxes[i]
             
-            // Extract bounding box coordinates - YOLO outputs are normalized [0, 1]
-            val xCenter = box[0] * imageWidth
-            val yCenter = box[1] * imageHeight
-            val w = box[2] * imageWidth
-            val h = box[3] * imageHeight
+            Log.d("ObjectDetector", "Raw box $i: [${box[0]},${box[1]},${box[2]},${box[3]}]")
             
-            // Convert center coordinates to corner coordinates
-            val left = max(0f, xCenter - w / 2)
-            val top = max(0f, yCenter - h / 2)
-            val right = min(imageWidth.toFloat(), xCenter + w / 2)
-            val bottom = min(imageHeight.toFloat(), yCenter + h / 2)
+            // Extract bounding box coordinates - YOLO outputs are normalized [0, 1]
+            val xCenter = box[0]
+            val yCenter = box[1]
+            val w = box[2]
+            val h = box[3]
+            
+            // Skip invalid boxes
+            if (w <= 0 || h <= 0) continue
+            
+            // Convert center coordinates to corner coordinates (still normalized)
+            val leftNorm = max(0f, xCenter - w / 2)
+            val topNorm = max(0f, yCenter - h / 2)
+            val rightNorm = min(1f, xCenter + w / 2)
+            val bottomNorm = min(1f, yCenter + h / 2)
+            
+            // Convert normalized coordinates to pixel coordinates
+            val left = leftNorm * imageWidth
+            val top = topNorm * imageHeight
+            val right = rightNorm * imageWidth
+            val bottom = bottomNorm * imageHeight
+            
+            Log.d("ObjectDetector", "Box $i: normalized=[$leftNorm,$topNorm,$rightNorm,$bottomNorm] pixel=[$left,$top,$right,$bottom]")
             
             // Only add detections with valid boxes (non-zero area)
-            if ((right - left) > 0 && (bottom - top) > 0) {
+            if ((right - left) > 10 && (bottom - top) > 10) {  // 降低最小尺寸要求
                 val boundingBox = android.graphics.RectF(left, top, right, bottom)
                 
                 results.add(
                     DetectionResult(
                         boundingBox = boundingBox,
-                        confidence = 0.8f, // 暂时使用固定置信度，因为模型没有输出置信度
+                        confidence = 0.9f,  // 提高置信度以便更容易看到
                         className = "Object"  // 暂时使用固定类别，因为模型没有输出类别信息
                     )
                 )
             }
         }
         
-        // 应用NMS去除重叠的检测框
-        return results.filterNonMaxSuppression()
+        Log.d("ObjectDetector", "Returning ${results.size} valid detection boxes")
+        
+        // 暂时禁用NMS以简化调试
+        return results
     }
 
     // Simple NMS implementation

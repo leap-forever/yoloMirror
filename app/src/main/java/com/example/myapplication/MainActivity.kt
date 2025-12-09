@@ -21,6 +21,7 @@ import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageProxy
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -32,6 +33,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -40,6 +42,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -201,10 +204,15 @@ fun CameraScreen(modifier: Modifier = Modifier) {
     var detectionResults by remember { mutableStateOf<List<DetectionResult>>(emptyList()) }
     var imageBitmap by remember { mutableStateOf<ImageBitmap?>(null) }
     val imageSize = remember { android.graphics.Point(640, 640) } // Default size
-    val viewSize = remember { android.graphics.Point(1080, 1920) } // Default size
+    var viewSize = remember { android.graphics.Point(1, 1) } // Will be updated dynamically
     var isDetecting by remember { mutableStateOf(false) }
     var lastDetectionTime by remember { mutableStateOf(0L) }
     var processingImage by remember { mutableStateOf(false) }
+    
+    // Get actual screen size
+    val configuration = LocalConfiguration.current
+    val screenWidth = configuration.screenWidthDp
+    val screenHeight = configuration.screenHeightDp
     
     DisposableEffect(objectDetector) {
         onDispose {
@@ -240,7 +248,17 @@ fun CameraScreen(modifier: Modifier = Modifier) {
             }
         }
     ) { innerPadding ->
-        Box(modifier = modifier.fillMaxSize().padding(innerPadding)) {
+        BoxWithConstraints(modifier = modifier.fillMaxSize().padding(innerPadding)) {
+            // Update viewSize with actual constraints
+            val actualWidth = this.maxWidth
+            val actualHeight = this.maxHeight
+            
+            LaunchedEffect(actualWidth, actualHeight) {
+                viewSize = android.graphics.Point(
+                    actualWidth.value.toInt(),
+                    actualHeight.value.toInt()
+                )
+            }
             CameraPreview(
                 modifier = Modifier.fillMaxSize(),
                 cameraSelector = cameraSelector,
@@ -273,17 +291,22 @@ fun CameraScreen(modifier: Modifier = Modifier) {
                                 if (currentTime - lastDetectionTime > 1000) { // At least 1 second between detections
                                     lastDetectionTime = currentTime
                                     
-                                    val results = objectDetector.detect(scaledBitmap)
+                                    // 使用原始图像尺寸进行检测，确保坐标匹配
+                                    val results = objectDetector.detect(it)  // 使用原始图像而不是缩放后的图像
                                     detectionResults = results
+                                    
+                                    Log.d("MainActivity", "Detection results: ${results.size} boxes")
                                     
                                     // Show notification for first detected object
                                     if (results.isNotEmpty()) {
                                         val firstResult = results.first()
                                         context.showDetectionNotification(firstResult.className, firstResult.confidence)
+                                        Log.d("MainActivity", "First detection: ${firstResult.className} at ${firstResult.boundingBox}")
                                     }
                                     
-                                    // Update image size for overlay
+                                    // Update image size for overlay - 使用实际显示的图像尺寸
                                     imageSize.set(scaledBitmap.width, scaledBitmap.height)
+                                    Log.d("MainActivity", "Image size for overlay: ${scaledBitmap.width}x${scaledBitmap.height}")
                                 }
                             }
                         }
@@ -298,8 +321,21 @@ fun CameraScreen(modifier: Modifier = Modifier) {
             
             // Display detection results overlay
             imageBitmap?.let {
+                // 如果没有检测结果，添加一个测试框来验证绘制逻辑
+                val displayResults = if (detectionResults.isEmpty() && isDetecting) {
+                    listOf(
+                        DetectionResult(
+                            boundingBox = android.graphics.RectF(100f, 100f, 200f, 200f),
+                            confidence = 0.9f,
+                            className = "Test"
+                        )
+                    )
+                } else {
+                    detectionResults
+                }
+                
                 DetectionOverlay(
-                    detectionResults = detectionResults,
+                    detectionResults = displayResults,
                     imageSize = imageSize,
                     viewSize = viewSize,
                     modifier = Modifier.fillMaxSize()

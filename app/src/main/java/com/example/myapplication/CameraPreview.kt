@@ -17,7 +17,6 @@ import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
-import kotlinx.coroutines.delay
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Box
@@ -27,7 +26,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -129,35 +127,46 @@ fun DetectionOverlay(
         val scaleX = viewSize.x.toFloat() / imageSize.x
         val scaleY = viewSize.y.toFloat() / imageSize.y
         
-        detectionResults.forEach { result ->
+        Log.d("DetectionOverlay", "Detection results count: ${detectionResults.size}")
+        Log.d("DetectionOverlay", "Image size: ${imageSize.x}x${imageSize.y}, View size: ${viewSize.x}x${viewSize.y}")
+        Log.d("DetectionOverlay", "Scale factors: X=$scaleX, Y=$scaleY")
+        
+        detectionResults.forEachIndexed { index, result ->
             val left = result.boundingBox.left * scaleX
             val top = result.boundingBox.top * scaleY
             val right = result.boundingBox.right * scaleX
             val bottom = result.boundingBox.bottom * scaleY
             
-            // Draw bounding box
-            drawRect(
-                color = androidx.compose.ui.graphics.Color.Red,
-                topLeft = Offset(left, top),
-                size = Size(right - left, bottom - top),
-                style = Stroke(width = 4f)
-            )
+            Log.d("DetectionOverlay", "Result $index: Original box: ${result.boundingBox}, Scaled box: [$left,$top,$right,$bottom]")
             
-            // Draw label
-            drawContext.canvas.nativeCanvas.apply {
-                val paint = Paint().apply {
-                    color = Color.RED
-                    textSize = 40f
-                    isAntiAlias = true
-                    style = Paint.Style.FILL
-                }
-                
-                drawText(
-                    "${result.className} ${String.format("%.2f", result.confidence)}",
-                    left,
-                    top - 10,
-                    paint
+            // 确保框在视图范围内
+            if (left >= 0 && top >= 0 && right <= viewSize.x && bottom <= viewSize.y) {
+                // Draw bounding box
+                drawRect(
+                    color = androidx.compose.ui.graphics.Color.Red,
+                    topLeft = Offset(left, top),
+                    size = Size(right - left, bottom - top),
+                    style = Stroke(width = 6f)  // 增加线宽以便更容易看到
                 )
+                
+                // Draw label
+                drawContext.canvas.nativeCanvas.apply {
+                    val paint = Paint().apply {
+                        color = Color.RED
+                        textSize = 40f
+                        isAntiAlias = true
+                        style = Paint.Style.FILL
+                    }
+                    
+                    drawText(
+                        "${result.className} ${String.format("%.2f", result.confidence)}",
+                        left,
+                        top - 10,
+                        paint
+                    )
+                }
+            } else {
+                Log.d("DetectionOverlay", "Result $index is outside view bounds")
             }
         }
     }
