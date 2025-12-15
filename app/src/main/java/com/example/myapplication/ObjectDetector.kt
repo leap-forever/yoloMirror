@@ -57,7 +57,7 @@ class ObjectDetector(private val context: Context) {
         
         // Preprocessing
         val byteBuffer = convertBitmapToByteBuffer(resizedBitmap)
-        ¬
+
         try {
             // 根据错误信息，模型输出是 [1, 8400, 4]
             // 创建一个符合该形状的输出缓冲区
